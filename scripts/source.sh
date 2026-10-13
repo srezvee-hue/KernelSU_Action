@@ -8,13 +8,31 @@ set -euo pipefail
 WORKSPACE=${WORKSPACE:?WORKSPACE must be set}
 KERNEL_DIR="${WORKSPACE}/android-kernel"
 
+# Hard reset the kernel tree before clone so stale generated files or partial
+# backports from previous runs cannot leak into a fresh build.
+reset_kernel_tree() {
+  local dir=$1
+  if [ -d "${dir}/.git" ]; then
+    info "resetting existing kernel tree at ${dir}"
+    git -C "${dir}" reset --hard HEAD >/dev/null 2>&1 || true
+    git -C "${dir}" clean -fdx >/dev/null 2>&1 || true
+    git -C "${dir}" submodule foreach --recursive 'git reset --hard HEAD >/dev/null 2>&1 || true; git clean -fdx >/dev/null 2>&1 || true' >/dev/null 2>&1 || true
+  fi
+  rm -rf "${dir}/out" "${dir}/.config" "${dir}/.tmp_versions" "${dir}/include/generated" "${dir}/arch/${ARCH:-arm64}/boot"
+}
+
+# Remove any stale clone/build artifacts from previous attempts in the same
+# workspace before pulling a fresh source tree.
+reset_kernel_tree "${KERNEL_DIR}"
+rm -rf "${KERNEL_DIR}"
+rm -rf "${WORKSPACE}/out" "${WORKSPACE}/defconfig.orig"
+
 group "Cloning kernel source"
 info "${KERNEL_SOURCE} @ ${KERNEL_SOURCE_BRANCH}"
 
 ref_exists "$KERNEL_SOURCE" "$KERNEL_SOURCE_BRANCH" \
 	|| die "branch/tag '${KERNEL_SOURCE_BRANCH}' does not exist in ${KERNEL_SOURCE}"
 
-rm -rf "$KERNEL_DIR"
 retry 3 git clone -q --recursive --depth=1 \
 	-b "$KERNEL_SOURCE_BRANCH" "$KERNEL_SOURCE" "$KERNEL_DIR" \
 	|| die "failed to clone ${KERNEL_SOURCE}"
