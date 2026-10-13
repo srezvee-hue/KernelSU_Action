@@ -33,15 +33,16 @@ info "${KERNEL_SOURCE} @ ${KERNEL_SOURCE_BRANCH}"
 ref_exists "$KERNEL_SOURCE" "$KERNEL_SOURCE_BRANCH" \
 	|| die "branch/tag '${KERNEL_SOURCE_BRANCH}' does not exist in ${KERNEL_SOURCE}"
 
-# Use a full clone for kernel sources. Shallow clones can mask inconsistent
-# history, partial backports, and submodule state, which are exactly the kinds of
-# issues that cause scheduler/arch symbol mismatches during compilation.
+# Full clone is mandatory here: shallow history can mask inconsistent or
+# partially backported tree state, which is exactly what produces a kernel API
+# mismatch during compilation.
 retry 3 git clone -q --recursive \
 	-b "$KERNEL_SOURCE_BRANCH" "$KERNEL_SOURCE" "$KERNEL_DIR" \
 	|| die "failed to clone ${KERNEL_SOURCE}"
 
-# Print the exact tree state before building so we can catch inconsistent source
-# trees immediately in CI logs instead of only seeing downstream compiler errors.
+# Fail fast if the kernel tree is not pristine. This prevents us from wasting CI
+# time compiling a tree that has been modified, partially patched, or carries an
+# unexpected submodule state.
 info "kernel tree diagnostics"
 info "branch: $(git -C "${KERNEL_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
 info "head: $(git -C "${KERNEL_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -49,21 +50,21 @@ info "status:"
 (git -C "${KERNEL_DIR}" status --short --branch 2>/dev/null || true)
 info "submodules:"
 (git -C "${KERNEL_DIR}" submodule status --recursive 2>/dev/null || true)
-info "symbol scan (warnings only):"
+info "warning-only symbol scan:"
 (git -C "${KERNEL_DIR}" grep -nE 'sched_ravg_window|last_wake_ts|free_areai|cpu_soft_restart' -- . ':(exclude).git' 2>/dev/null || true)
 
-# Neutralize any stale generated build artifacts before building.
-(
-	cd "${KERNEL_DIR}" && \
-	make mrproper >/dev/null 2>&1 || true
-)
-
-# KernelSU forks compute their version from the commit count, and several
-# read it straight out of the enclosing git repo. A depth-1 clone reports 1
-# commit, which produces a nonsense version. Unshallow just enough to count.
-if [ -f "${KERNEL_DIR}/.git/shallow" ]; then
-	debug "kernel tree is shallow; that is fine for building"
+# A clean build must start from a pristine source tree. If the checkout is dirty,
+# abort before make to avoid the classic scheduler/zone API mismatches seen in
+# mixed or stale trees.
+if [ -n "$(git -C "${KERNEL_DIR}" status --porcelain 2>/dev/null)" ]; then
+  die "kernel tree is dirty after checkout; refusing to build a mixed tree. Clean the source tree and retry."
 fi
+
+# Neutralize stale generated build artifacts before the actual compile step.
+(
+  cd "${KERNEL_DIR}" && \
+  make mrproper >/dev/null 2>&1 || true
+)
 
 KVER=$(kernel_version "$KERNEL_DIR") \
 	|| die "could not read VERSION/PATCHLEVEL from ${KERNEL_DIR}/Makefile -- is this a kernel tree?"
