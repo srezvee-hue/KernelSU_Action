@@ -33,26 +33,28 @@ info "${KERNEL_SOURCE} @ ${KERNEL_SOURCE_BRANCH}"
 ref_exists "$KERNEL_SOURCE" "$KERNEL_SOURCE_BRANCH" \
 	|| die "branch/tag '${KERNEL_SOURCE_BRANCH}' does not exist in ${KERNEL_SOURCE}"
 
-retry 3 git clone -q --recursive --depth=1 \
+# Use a full clone for kernel sources. Shallow clones can mask inconsistent
+# history, partial backports, and submodule state, which are exactly the kinds of
+# issues that cause scheduler/arch symbol mismatches during compilation.
+retry 3 git clone -q --recursive \
 	-b "$KERNEL_SOURCE_BRANCH" "$KERNEL_SOURCE" "$KERNEL_DIR" \
 	|| die "failed to clone ${KERNEL_SOURCE}"
 
-# If the clone is shallow, try to unshallow so that any tree relying on
-# history (or submodule pointers) behaves like a full checkout.
-if [ -f "${KERNEL_DIR}/.git/shallow" ]; then
-	debug "kernel tree is shallow; attempting to unshallow"
-	if git -C "${KERNEL_DIR}" fetch --unshallow --tags >/dev/null 2>&1; then
-		debug "successfully unshallowed kernel tree"
-	else
-		warn "could not unshallow kernel tree; proceeding with shallow clone"
-	fi
-fi
+# Print the exact tree state before building so we can catch inconsistent source
+# trees immediately in CI logs instead of only seeing downstream compiler errors.
+info "kernel tree diagnostics"
+info "branch: $(git -C "${KERNEL_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+info "head: $(git -C "${KERNEL_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+info "status:"
+(git -C "${KERNEL_DIR}" status --short --branch 2>/dev/null || true)
+info "submodules:"
+(git -C "${KERNEL_DIR}" submodule status --recursive 2>/dev/null || true)
+info "symbol scan (warnings only):"
+(git -C "${KERNEL_DIR}" grep -nE 'sched_ravg_window|last_wake_ts|free_areai|cpu_soft_restart' -- . ':(exclude).git' 2>/dev/null || true)
 
-# Ensure the freshly cloned tree is pristine; run mrproper to remove any
-# generated artefacts that might survive between CI runs on reused runners.
+# Neutralize any stale generated build artifacts before building.
 (
 	cd "${KERNEL_DIR}" && \
-	# Don't fail the build just because mrproper isn't available in this tree
 	make mrproper >/dev/null 2>&1 || true
 )
 
