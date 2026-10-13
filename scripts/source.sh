@@ -37,6 +37,25 @@ retry 3 git clone -q --recursive --depth=1 \
 	-b "$KERNEL_SOURCE_BRANCH" "$KERNEL_SOURCE" "$KERNEL_DIR" \
 	|| die "failed to clone ${KERNEL_SOURCE}"
 
+# If the clone is shallow, try to unshallow so that any tree relying on
+# history (or submodule pointers) behaves like a full checkout.
+if [ -f "${KERNEL_DIR}/.git/shallow" ]; then
+	debug "kernel tree is shallow; attempting to unshallow"
+	if git -C "${KERNEL_DIR}" fetch --unshallow --tags >/dev/null 2>&1; then
+		debug "successfully unshallowed kernel tree"
+	else
+		warn "could not unshallow kernel tree; proceeding with shallow clone"
+	fi
+fi
+
+# Ensure the freshly cloned tree is pristine; run mrproper to remove any
+# generated artefacts that might survive between CI runs on reused runners.
+(
+	cd "${KERNEL_DIR}" && \
+	# Don't fail the build just because mrproper isn't available in this tree
+	make mrproper >/dev/null 2>&1 || true
+)
+
 # KernelSU forks compute their version from the commit count, and several
 # read it straight out of the enclosing git repo. A depth-1 clone reports 1
 # commit, which produces a nonsense version. Unshallow just enough to count.
