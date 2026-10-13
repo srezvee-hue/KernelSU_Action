@@ -24,6 +24,12 @@ prepare_defconfig() {
 		|| die "defconfig not found: arch/${ARCH}/configs/${KERNEL_CONFIG}
        Available: $(ls "${KERNEL_DIR}/arch/${ARCH}/configs/" | head -20 | tr '\n' ' ')"
 
+	# Always start from a clean generated output directory. Stale out/ files from
+	# a previous run can leave the kernel tree half-built and trigger the exact
+	# scheduler/struct mismatches seen in CI.
+	make -C "$KERNEL_DIR" O=out mrproper >/dev/null 2>&1 || true
+	rm -rf "$OUT"
+
 	cp "$DEFCONFIG_PATH" "${WORKSPACE}/defconfig.orig"
 
 	local kver
@@ -111,9 +117,9 @@ build_kernel() {
 
 	# DISABLE_LTO is this action's boolean configuration switch, but several
 	# Android kernel trees use the same Make variable for compiler flags (for
-	# example, "-fno-lto").  Leaving our value in the environment makes a
+	# example, "-fno-lto"). Leaving our value in the environment makes a
 	# non-LTO build invoke `clang ... false ...`, treating "false" as an input
-	# file.  prepare_defconfig() has already consumed the action setting, so let
+	# file. prepare_defconfig() has already consumed the action setting, so let
 	# Kbuild own the name from this point on.
 	unset DISABLE_LTO
 

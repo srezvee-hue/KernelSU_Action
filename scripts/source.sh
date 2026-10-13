@@ -14,10 +14,18 @@ info "${KERNEL_SOURCE} @ ${KERNEL_SOURCE_BRANCH}"
 ref_exists "$KERNEL_SOURCE" "$KERNEL_SOURCE_BRANCH" \
 	|| die "branch/tag '${KERNEL_SOURCE_BRANCH}' does not exist in ${KERNEL_SOURCE}"
 
+# Always start from a fresh upstream tree. Reusing an old android-kernel
+# directory leaves stale generated files and partial build state behind, which is
+# exactly the kind of state that produces the scheduler/struct mismatches in the
+# logs.
 rm -rf "$KERNEL_DIR"
 retry 3 git clone -q --recursive --depth=1 \
 	-b "$KERNEL_SOURCE_BRANCH" "$KERNEL_SOURCE" "$KERNEL_DIR" \
 	|| die "failed to clone ${KERNEL_SOURCE}"
+
+# Guard against stale artifacts that might survive inside the freshly cloned tree
+# when a previous run left generated files behind.
+rm -rf "${KERNEL_DIR}/out" "${KERNEL_DIR}/.config" "${KERNEL_DIR}/.config.old"
 
 # KernelSU forks compute their version from the commit count, and several
 # read it straight out of the enclosing git repo. A depth-1 clone reports 1
