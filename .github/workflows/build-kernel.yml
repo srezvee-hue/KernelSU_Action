@@ -34,18 +34,9 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential git wget curl ca-certificates bc bison flex \
-            python3 python3-pip python2 zip unzip ccache ncurses-dev \
+            python3 python3-pip python3-setuptools zip unzip ccache ncurses-dev \
             libssl-dev libelf-dev clang lld gcc-aarch64-linux-gnu \
             g++-aarch64-linux-gnu binutils-aarch64-linux-gnu rsync
-
-          # Route system calls to Python 2 to prevent script printing crash behaviors
-          if python3 -V 2>&1 | grep -q 'Python 3'; then
-            sudo tee /usr/local/bin/python > /dev/null <<'PY'
-#!/bin/sh
-exec python2 "$@"
-PY
-            sudo chmod +x /usr/local/bin/python
-          fi
 
       - name: Fetch kernel source
         shell: bash
@@ -68,8 +59,10 @@ PY
         run: |
           set -euxo pipefail
           cd "$KERNEL_DIR"
+          # Convert legacy print statements to Python 3 syntax across all script targets
           if [ -f scripts/gcc-wrapper.py ]; then
             sed -i "s/print \\([^,]*\\),/print(\\1,end=' ')/g" scripts/gcc-wrapper.py || true
+            sed -i 's/print \(.*\)/print(\1)/g' scripts/gcc-wrapper.py || true
           fi
 
       - name: Build kernel
@@ -84,11 +77,16 @@ PY
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           
           cd "$KERNEL_DIR"
-          # Trigger configuration targets
-          make O="$OUT_DIR" "$DEFCONFIG"
+          # Trigger configuration targets using the explicit output tree environment
+          make O="$OUT_DIR" ARCH=arm64 "$DEFCONFIG"
           
-          # Compile while passing the warning override flag to prevent driver interruptions
-          make O="$OUT_DIR" -j"$JOBS" CC=clang CLANG_TRIPLE=aarch64-linux-gnu- KCFLAGS="-w"
+          # Compile using complete LLVM variables to handle assembly and linking cleanly
+          make O="$OUT_DIR" -j"$JOBS" ARCH=arm64 \
+            CC=clang \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            KCFLAGS="-w"
 
       - name: Package AnyKernel3 Zip Artifact
         if: success()
@@ -98,12 +96,12 @@ PY
           git clone --depth=1 https://github.com AnyKernel3
           rm -rf AnyKernel3/.git AnyKernel3/README.md || true
           
-          # Locates and moves the compiled binary payload target
+          # Locates and moves the compiled binary payload target cleanly
           if [ -f "$OUT_DIR/arch/arm64/boot/Image.gz-dtb" ]; then
             cp "$OUT_DIR/arch/arm64/boot/Image.gz-dtb" AnyKernel3/
           else
             cp "$OUT_DIR/arch/arm64/boot/Image" AnyKernel3/
-          }
+          fi
           
           cd AnyKernel3
           zip -r9 ../OnePlus9R-Kernel-Finished.zip .
